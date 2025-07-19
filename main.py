@@ -47,9 +47,9 @@ def update_coin_list_from_mexc_and_cmc():
         
         coin_list = []
         with open("coin_list.txt", "w", encoding="utf-8") as f:
-for i in range(0, len(symbols), 100):  # CMC API batch limit
-    batch = symbols[i:i+100]
-    print(f"\n--- CMC sorgu: {batch} ---")
+            for i in range(0, len(symbols), 100):  # CMC API batch limit
+            batch = symbols[i:i+100]
+        print(f"\n--- CMC sorgu: {batch} ---")
     cmc_data = get_marketcap_with_keys(batch)
     if not cmc_data or "data" not in cmc_data:
         print("CMC API'den veri alınamadı veya 'data' alanı yok. API anahtarlarını ve kota durumunu kontrol et.")
