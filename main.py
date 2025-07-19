@@ -223,6 +223,18 @@ def check_ma_signals():
                 ma25_current = df['ma25'].iloc[-1]
                 rsi_value = df['rsi'].iloc[-1]
 
+                # ---- YENİ: Son 72 saatlik yüksek hacimli mumları bul ve mesajı özelleştir ----
+                last_72 = df.tail(72)
+                volume_avg = last_72['volume'].mean()
+                volume_threshold = volume_avg * 1.5
+
+                green_candles = last_72[last_72['close'] > last_72['open']]
+                red_candles = last_72[last_72['open'] > last_72['close']]
+
+                green_high = (green_candles['volume'] > volume_threshold).sum()
+                red_high = (red_candles['volume'] > volume_threshold).sum()
+                # ---------------------------------------------------------------------------
+
                 print(f"📊 {symbol_mexc}: Fiyat={current_price:.4f}, MA7={ma7_current:.4f}, MA25={ma25_current:.4f}, RSI={rsi_value:.2f}, H={consecutive_count}{direction_emoji}")
 
                 # ALERT MESAJI için eski koddaki alert listesine ekle
@@ -232,7 +244,10 @@ def check_ma_signals():
                     pct_diff_str = f"{sign}{pct_diff}%"
 
                     coin_name = symbol_mexc.replace('/USDT', '')
-                    alert_text = f"{coin_name} ({consecutive_hours}h) R:{int(rsi_value)} H={consecutive_count}{direction_emoji} {pct_diff_str}"
+                    alert_text = (
+                        f"{coin_name}-{consecutive_hours}h-R{int(rsi_value)}-"
+                        f"{consecutive_count}{direction_emoji} {pct_diff_str} 🔺 L{green_high}/S{red_high}"
+                    )
 
                     alert_list.append((None, alert_text))
 
@@ -245,7 +260,7 @@ def check_ma_signals():
 
         print(f"✅ {checked_count} coin kontrol edildi, {len(alert_list)} alert bulundu")
 
-        ma_condition_coins = [alert.split(' (')[0] for _, alert in alert_list]
+        ma_condition_coins = [alert.split('-')[0] for _, alert in alert_list]
 
         if check_ma_condition_changes(ma_condition_coins):
             if alert_list:
