@@ -46,51 +46,7 @@ def update_coin_list_from_mexc_and_cmc():
         symbols = [coin['symbol'] for coin in top_300]
         
         coin_list = []
-        with open("coin_list.txt", "w", encoding="utf-8") as f:
-            for i in range(0, len(symbols), 100):  # CMC API batch limit
-            batch = symbols[i:i+100]
-        print(f"\n--- CMC sorgu: {batch} ---")
-    cmc_data = get_marketcap_with_keys(batch)
-    if not cmc_data or "data" not in cmc_data:
-        print("CMC API'den veri alınamadı veya 'data' alanı yok. API anahtarlarını ve kota durumunu kontrol et.")
-        continue
-    for sym in batch:
-        cmc_info = cmc_data["data"].get(sym)
-        if not cmc_info:
-            print(f"{sym}: CoinMarketCap'te bulunamadı (sembol uyuşmazlığı olabilir).")
-            continue
-        try:
-            marketcap = float(cmc_info["quote"]["USD"]["market_cap"])
-            mexc_coin = next((c for c in top_300 if c["symbol"] == sym), None)
-            volume = float(mexc_coin["quoteVolume"]) if mexc_coin else 0
-            oran = volume / marketcap if marketcap else 0
-            print(f"{sym}: hacim={volume}, marketcap={marketcap}, oran={oran}")
-            if marketcap > 0 and oran > 0.05:
-                coin_list.append(sym)
-                f.write(f"{sym},{volume},{marketcap}\n")
-        except Exception as e:
-            print(f"{sym}: hesaplama hatası: {e}")
-                        continue
-                time.sleep(1)  # CMC API rate limit için
-        print(f"Filtrelenmiş coin sayısı: {len(coin_list)}")
-        globals()["coin_list"] = coin_list
-    except Exception as e:
-        print(f"Coin listesi güncellenirken hata: {e}")
-
-# Kendi kodunun kalanını (Flask, Telegram, vs.) olduğu gibi bırakabilirsin, coin_list artık güncel olacak.
-
-# Scheduler ile her saat başı güncelle
-scheduler = BackgroundScheduler(daemon=True)
-scheduler.add_job(update_coin_list_from_mexc_and_cmc, 'interval', hours=1, max_instances=1)
-update_coin_list_from_mexc_and_cmc()  # Script başında da çalışsın
-scheduler.start()
-
-# Eğer Flask vs. kullanıyorsan aşağıdaki gibi devam edebilirsin
-# ... (diğer kodlar)
-# 2. coin_list.txt'den hacim/marketcap > 0.05 olan ilk 100 coini oku
-coin_list = []
-try:
-    with open("coin_list.txt", "w", encoding="utf-8") as f:
+with open("coin_list.txt", "w", encoding="utf-8") as f:
     for i in range(0, len(symbols), 100):  # CMC API batch limit
         batch = symbols[i:i+100]
         print(f"\n--- CMC sorgu: {batch} ---")
@@ -116,6 +72,11 @@ try:
                 print(f"{sym}: hesaplama hatası: {e}")
                 continue
         time.sleep(1)  # CMC API rate limit için
+print(f"Filtrelenmiş coin sayısı: {len(coin_list)}")
+globals()["coin_list"] = coin_list        
+
+    except Exception as e:
+        print(f"Coin listesi güncellenirken hata: {e}")
 
 
 # Artık coin_list değişkenin güncel ve filtrelenmiş durumda!
