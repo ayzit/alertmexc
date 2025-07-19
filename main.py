@@ -4,19 +4,16 @@ import time
 import atexit
 import pandas as pd
 import requests
-from flask import Flask
-from threading import Thread
-from apscheduler.schedulers.background import BackgroundScheduler
-from dotenv import load_dotenv
-from datetime import datetime
-import pytz
+import BackgroundScheduler
+import load_dotenv
+import Flask
+import Thread
+from flask 
+from threading 
+from apscheduler.schedulers.background 
+from dotenv 
 
-# .env dosyasını yükle
 load_dotenv()
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-TZ = pytz.timezone("Europe/Istanbul")
 
 CMC_API_KEYS = [
     os.getenv("CMC_API_KEY1"),
@@ -25,7 +22,6 @@ CMC_API_KEYS = [
 ]
 CMC_QUOTE_URL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
 
-coin_list = []
 
 def get_marketcap_with_keys(symbols):
     for api_key in CMC_API_KEYS:
@@ -41,6 +37,7 @@ def get_marketcap_with_keys(symbols):
             continue
     return None
 
+
 def update_coin_list_from_mexc_and_cmc():
     print("Coin listesi güncelleniyor...")
     try:
@@ -48,31 +45,53 @@ def update_coin_list_from_mexc_and_cmc():
         mexc_data = resp.json()
         sorted_coins = sorted(mexc_data, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
         top_300 = sorted_coins[:300]
-        symbols = [coin['symbol'] for coin in top_300]
 
-        coin_list.clear()
+        symbols = []
+        symbol_volume_map = {}
+
+        for coin in top_300:
+            symbol = coin['symbol']
+            if symbol.endswith('USDT'):
+                base = symbol.replace('USDT', '')
+                volume = float(coin.get('quoteVolume', 0))
+                symbols.append(base)
+                symbol_volume_map[base] = volume
+
+        coin_list = []
         with open("coin_list.txt", "w", encoding="utf-8") as f:
             for i in range(0, len(symbols), 100):
                 batch = symbols[i:i+100]
+                print(f"\n--- CMC sorgu: {batch} ---")
                 cmc_data = get_marketcap_with_keys(batch)
                 if not cmc_data or "data" not in cmc_data:
+                    print("CMC API'den veri alınamadı veya 'data' alanı yok.")
                     continue
+
                 for sym in batch:
                     cmc_info = cmc_data["data"].get(sym)
                     if not cmc_info:
+                        print(f"⛔ {sym}: CoinMarketCap'te bulunamadı (sembol uyuşmazlığı olabilir).")
                         continue
                     try:
                         marketcap = float(cmc_info["quote"]["USD"]["market_cap"])
-                        mexc_coin = next((c for c in top_300 if c["symbol"] == sym), None)
-                        volume = float(mexc_coin["quoteVolume"]) if mexc_coin else 0
+                        volume = symbol_volume_map.get(sym, 0)
                         oran = volume / marketcap if marketcap else 0
-                        if marketcap > 0 and oran > 0.05:
+
+                        print(f"🔎 {sym}: Volume={volume:.2f}, MarketCap={marketcap:.2f}, Oran={oran:.4f}")
+
+                        if marketcap > 0 and oran > 0.01:
                             coin_list.append(sym)
                             f.write(f"{sym},{volume},{marketcap}\n")
-                    except:
+                            print(f"✅ {sym} eklendi (oran={oran:.4f})")
+                        else:
+                            print(f"⚠️ {sym} elendi: oran çok düşük ({oran:.4f})")
+
+                    except Exception as e:
+                        print(f"🚨 {sym}: hesaplama hatası: {e}")
                         continue
                 time.sleep(1)
         print(f"Filtrelenmiş coin sayısı: {len(coin_list)}")
+        globals()["coin_list"] = coin_list
     except Exception as e:
         print(f"Coin listesi güncellenirken hata: {e}")
 
