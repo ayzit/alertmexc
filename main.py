@@ -6,7 +6,44 @@ import pandas as pd
 from flask import Flask
 from threading import Thread
 from apscheduler.schedulers.background import BackgroundScheduler
+import requests
 
+# 1. MEXC API'den coin verilerini çek ve coin_list.txt'ye kaydet
+try:
+    response = requests.get("https://api.mexc.com/api/v3/ticker/24hr", timeout=10)
+    data = response.json()
+    with open("coin_list.txt", "w", encoding="utf-8") as f:
+        for coin in data:
+            # 'symbol', 'quoteVolume', 'marketCap' alanları mevcutsa yaz
+            symbol = coin.get("symbol")
+            volume = float(coin.get("quoteVolume", 0))
+            marketcap = float(coin.get("marketCap", 0))
+            # Eğer marketcap yoksa, volume/marketcap oranı hesaplanamayacağı için atla
+            if symbol and marketcap > 0:
+                f.write(f"{symbol},{volume},{marketcap}\n")
+except Exception as e:
+    print(f"MEXC verisi çekilirken hata oluştu: {e}")
+
+# 2. coin_list.txt'den hacim/marketcap > 0.05 olan ilk 100 coini oku
+coin_list = []
+try:
+    with open('coin_list.txt', 'r', encoding='utf-8') as f:
+        for line in f:
+            parts = line.strip().split(',')
+            if len(parts) < 3:
+                continue
+            coin, volume, marketcap = parts[0], float(parts[1]), float(parts[2])
+            if marketcap == 0:
+                continue
+            ratio = volume / marketcap
+            if ratio > 0.05:
+                coin_list.append(coin)
+            if len(coin_list) == 100:
+                break
+except Exception as e:
+    print(f"coin_list.txt okunurken hata oluştu: {e}")
+
+# Artık coin_list değişkenin güncel ve filtrelenmiş durumda!
 # Gerekli diğer importlar ve değişkenler burada yer almalı
 # Örnek: TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, coin_list, TZ, vb.
 
