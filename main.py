@@ -3,16 +3,12 @@ import sys
 import time
 import atexit
 import pandas as pd
+import requests
 from flask import Flask
 from threading import Thread
 from apscheduler.schedulers.background import BackgroundScheduler
-
-import os
-import sys
-import time
-import requests
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
+
 
 # .env dosyasını yükle
 load_dotenv()
