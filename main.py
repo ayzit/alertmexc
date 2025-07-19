@@ -6,24 +6,85 @@ import pandas as pd
 from flask import Flask
 from threading import Thread
 from apscheduler.schedulers.background import BackgroundScheduler
+
+import os
+import sys
+import time
 import requests
+from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# 1. MEXC API'den coin verilerini çek ve coin_list.txt'ye kaydet
-try:
-    response = requests.get("https://api.mexc.com/api/v3/ticker/24hr", timeout=10)
-    data = response.json()
-    with open("coin_list.txt", "w", encoding="utf-8") as f:
-        for coin in data:
-            # 'symbol', 'quoteVolume', 'marketCap' alanları mevcutsa yaz
-            symbol = coin.get("symbol")
-            volume = float(coin.get("quoteVolume", 0))
-            marketcap = float(coin.get("marketCap", 0))
-            # Eğer marketcap yoksa, volume/marketcap oranı hesaplanamayacağı için atla
-            if symbol and marketcap > 0:
-                f.write(f"{symbol},{volume},{marketcap}\n")
-except Exception as e:
-    print(f"MEXC verisi çekilirken hata oluştu: {e}")
+# .env dosyasını yükle
+load_dotenv()
 
+CMC_API_KEYS = [
+    os.getenv("CMC_API_KEY1"),
+    os.getenv("CMC_API_KEY2"),
+    os.getenv("CMC_API_KEY3"),
+]
+CMC_QUOTE_URL = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
+
+def get_marketcap_with_keys(symbols):
+    for api_key in CMC_API_KEYS:
+        if not api_key:
+            continue
+        headers = {"X-CMC_PRO_API_KEY": api_key}
+        params = {"symbol": ",".join(symbols)}
+        try:
+            resp = requests.get(CMC_QUOTE_URL, headers=headers, params=params, timeout=15)
+            if resp.status_code == 200:
+                return resp.json()
+            # 429 veya başka hata kodunda diğer anahtara geç
+        except Exception:
+            continue
+    return None
+
+def update_coin_list_from_mexc_and_cmc():
+    print("Coin listesi güncelleniyor...")
+    try:
+        # 1. MEXC'den ilk 300 en yüksek hacimli coin
+        resp = requests.get("https://api.mexc.com/api/v3/ticker/24hr", timeout=15)
+        mexc_data = resp.json()
+        sorted_coins = sorted(mexc_data, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
+        top_300 = sorted_coins[:300]
+        symbols = [coin['symbol'] for coin in top_300]
+        
+        coin_list = []
+        with open("coin_list.txt", "w", encoding="utf-8") as f:
+            for i in range(0, len(symbols), 100):  # CMC API batch limit
+                batch = symbols[i:i+100]
+                cmc_data = get_marketcap_with_keys(batch)
+                if not cmc_data or "data" not in cmc_data:
+                    continue
+                for sym in batch:
+                    cmc_info = cmc_data["data"].get(sym)
+                    if not cmc_info:
+                        continue
+                    try:
+                        marketcap = float(cmc_info["quote"]["USD"]["market_cap"])
+                        mexc_coin = next((c for c in top_300 if c["symbol"] == sym), None)
+                        volume = float(mexc_coin["quoteVolume"]) if mexc_coin else 0
+                        if marketcap > 0 and (volume / marketcap) > 0.05:
+                            coin_list.append(sym)
+                            f.write(f"{sym},{volume},{marketcap}\n")
+                    except Exception:
+                        continue
+                time.sleep(1)  # CMC API rate limit için
+        print(f"Filtrelenmiş coin sayısı: {len(coin_list)}")
+        globals()["coin_list"] = coin_list
+    except Exception as e:
+        print(f"Coin listesi güncellenirken hata: {e}")
+
+# Kendi kodunun kalanını (Flask, Telegram, vs.) olduğu gibi bırakabilirsin, coin_list artık güncel olacak.
+
+# Scheduler ile her saat başı güncelle
+scheduler = BackgroundScheduler(daemon=True)
+scheduler.add_job(update_coin_list_from_mexc_and_cmc, 'interval', hours=1, max_instances=1)
+update_coin_list_from_mexc_and_cmc()  # Script başında da çalışsın
+scheduler.start()
+
+# Eğer Flask vs. kullanıyorsan aşağıdaki gibi devam edebilirsin
+# ... (diğer kodlar)
 # 2. coin_list.txt'den hacim/marketcap > 0.05 olan ilk 100 coini oku
 coin_list = []
 try:
