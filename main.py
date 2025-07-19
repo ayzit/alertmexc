@@ -90,21 +90,33 @@ scheduler.start()
 # 2. coin_list.txt'den hacim/marketcap > 0.05 olan ilk 100 coini oku
 coin_list = []
 try:
-    with open('coin_list.txt', 'r', encoding='utf-8') as f:
-        for line in f:
-            parts = line.strip().split(',')
-            if len(parts) < 3:
+    with open("coin_list.txt", "w", encoding="utf-8") as f:
+    for i in range(0, len(symbols), 100):  # CMC API batch limit
+        batch = symbols[i:i+100]
+        print(f"\n--- CMC sorgu: {batch} ---")
+        cmc_data = get_marketcap_with_keys(batch)
+        if not cmc_data or "data" not in cmc_data:
+            print("CMC API'den veri alınamadı veya 'data' alanı yok. API anahtarlarını ve kota durumunu kontrol et.")
+            continue
+        for sym in batch:
+            cmc_info = cmc_data["data"].get(sym)
+            if not cmc_info:
+                print(f"{sym}: CoinMarketCap'te bulunamadı (sembol uyuşmazlığı olabilir).")
                 continue
-            coin, volume, marketcap = parts[0], float(parts[1]), float(parts[2])
-            if marketcap == 0:
+            try:
+                marketcap = float(cmc_info["quote"]["USD"]["market_cap"])
+                mexc_coin = next((c for c in top_300 if c["symbol"] == sym), None)
+                volume = float(mexc_coin["quoteVolume"]) if mexc_coin else 0
+                oran = volume / marketcap if marketcap else 0
+                print(f"{sym}: hacim={volume}, marketcap={marketcap}, oran={oran}")
+                if marketcap > 0 and oran > 0.05:
+                    coin_list.append(sym)
+                    f.write(f"{sym},{volume},{marketcap}\n")
+            except Exception as e:
+                print(f"{sym}: hesaplama hatası: {e}")
                 continue
-            ratio = volume / marketcap
-            if ratio > 0.05:
-                coin_list.append(coin)
-            if len(coin_list) == 100:
-                break
-except Exception as e:
-    print(f"coin_list.txt okunurken hata oluştu: {e}")
+        time.sleep(1)  # CMC API rate limit için
+
 
 # Artık coin_list değişkenin güncel ve filtrelenmiş durumda!
 # Gerekli diğer importlar ve değişkenler burada yer almalı
