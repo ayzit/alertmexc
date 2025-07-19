@@ -46,9 +46,9 @@ def update_coin_list_from_mexc_and_cmc():
         symbols = [coin['symbol'] for coin in top_300]
         
         coin_list = []
-with open("coin_list.txt", "w", encoding="utf-8") as f:
-    for i in range(0, len(symbols), 100):  # CMC API batch limit
-        batch = symbols[i:i+100]
+        with open("coin_list.txt", "w", encoding="utf-8") as f:
+            for i in range(0, len(symbols), 100):  # CMC API batch limit
+                batch = symbols[i:i+100]
         print(f"\n--- CMC sorgu: {batch} ---")
         cmc_data = get_marketcap_with_keys(batch)
         if not cmc_data or "data" not in cmc_data:
@@ -71,10 +71,9 @@ with open("coin_list.txt", "w", encoding="utf-8") as f:
             except Exception as e:
                 print(f"{sym}: hesaplama hatası: {e}")
                 continue
-        time.sleep(1)  # CMC API rate limit için
-print(f"Filtrelenmiş coin sayısı: {len(coin_list)}")
-globals()["coin_list"] = coin_list        
-
+            time.sleep(1)  # CMC API rate limit için
+        print(f"Filtrelenmiş coin sayısı: {len(coin_list)}")
+        globals()["coin_list"] = coin_list        
     except Exception as e:
         print(f"Coin listesi güncellenirken hata: {e}")
 
