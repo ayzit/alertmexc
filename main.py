@@ -11,11 +11,6 @@ import atexit
 from dotenv import load_dotenv
 import pytz
 from datetime import datetime
-import sys
-
-# Fix console encoding for Unicode (emojis, Turkish chars)
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding='utf-8')
 
 # ENV yükleme
 load_dotenv()
@@ -36,23 +31,36 @@ exchange_mexc = ccxt.mexc({
     'options': {'defaultType': 'future'}
 })
 
-coin_list = [
-    'PENGU', 'PROM', 'FUN', 'QNT', 'SYRUP', 'HYPE', 'BID', 'SPX',
-    'MKR', 'AAVE', 'BNT', 'JST', 'CAKE', 'KAVA', 'CHEEMS', 'NEIROETH',
-    'FARTCOIN', 'SUN', 'PENDLE', 'AVA', 'SEI', 'JELLYJELLY', 'BONK', 'MOG', 'VIC', 'FLOKI',
-    'BTC', 'ETH', 'DOGE', 'NEIROCTO', 'SHIB', 'PEPE','KNC',
-]
+# Dinamik coin listesi
+coin_list = []
+symbols_mexc = []
 
-symbols_mexc = [f"{coin}/USDT" for coin in coin_list]
+def update_coin_list_from_mexc():
+    global coin_list, symbols_mexc
+    try:
+        url = "https://api.mexc.com/api/v3/ticker/24hr"
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        tickers = response.json()
+        # Yalnızca USDT paritelerini al, yüksek hacme göre sırala
+        usdt_tickers = [
+            t for t in tickers
+            if t["symbol"].endswith("USDT") and not t["symbol"].endswith("DOWNUSDT") and not t["symbol"].endswith("UPUSDT")
+        ]
+        # Hacme göre sırala, ilk 100'ü al
+        usdt_tickers.sort(key=lambda x: float(x["quoteVolume"]), reverse=True)
+        top_100 = usdt_tickers[:100]
+        # Sembol formatı: BTC/USDT
+        coin_list = [t["symbol"].replace("USDT", "") for t in top_100]
+        symbols_mexc = [f"{coin}/USDT" for coin in coin_list]
+        print(f"🆕 Coin listesi güncellendi. İlk 100 (USDT): {', '.join(coin_list[:5])}...")
+    except Exception as e:
+        print(f"❌ Coin listesini güncelleme hatası: {e}")
 
 def send_telegram_alert(message):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        data = {
-            'chat_id': TELEGRAM_CHAT_ID,
-            'text': message,
-            'parse_mode': 'HTML'  # For bold and color formatting
-        }
+        data = {'chat_id': TELEGRAM_CHAT_ID, 'text': message}
         response = requests.post(url, data=data, timeout=10)
         if response.status_code == 200:
             print(f"✓ Telegram mesajı gönderildi: {message[:50]}...")
@@ -65,7 +73,7 @@ def check_coin_list_changes():
     try:
         previous_coins = set()
         try:
-            with open("previous_coin_list.txt", "r", encoding="utf-8") as f:
+            with open("previous_coin_list.txt", "r") as f:
                 previous_coins = set(f.read().strip().split('\n'))
         except FileNotFoundError:
             pass
@@ -90,7 +98,7 @@ def check_coin_list_changes():
                 print(f"🔄 {change_msg}")
                 send_telegram_alert(change_msg)
 
-        with open("previous_coin_list.txt", "w", encoding="utf-8") as f:
+        with open("previous_coin_list.txt", "w") as f:
             f.write('\n'.join(sorted(current_coins)))
     except Exception as e:
         print(f"❌ Coin listesi kontrol hatası: {e}")
@@ -99,7 +107,7 @@ def check_ma_condition_changes(current_ma_coins):
     try:
         previous_ma_coins = set()
         try:
-            with open("previous_ma_coins.txt", "r", encoding="utf-8") as f:
+            with open("previous_ma_coins.txt", "r") as f:
                 previous_ma_coins = set(f.read().strip().split('\n'))
         except FileNotFoundError:
             pass
@@ -126,7 +134,7 @@ def check_ma_condition_changes(current_ma_coins):
                 print(f"🔄 {change_msg}")
                 send_telegram_alert(change_msg)
 
-        with open("previous_ma_coins.txt", "w", encoding="utf-8") as f:
+        with open("previous_ma_coins.txt", "w") as f:
             f.write('\n'.join(sorted(current_ma_coins_set)))
 
         return list_changed
@@ -134,40 +142,25 @@ def check_ma_condition_changes(current_ma_coins):
         print(f"❌ MA şartı kontrol hatası: {e}")
         return False
 
-def check_ma_signals_and_rsi_macd_ema():
+def check_ma_signals():
     try:
+        # Her kontrol öncesi coin listesini güncelle
+        update_coin_list_from_mexc()
         check_coin_list_changes()
 
-        print(f"🔍 MA ve RSI/MACD/EMA sinyalleri kontrol ediliyor... {pd.Timestamp.now(tz=TZ)}")
+        print(f"🔍 MA sinyalleri kontrol ediliyor... {pd.Timestamp.now(tz=TZ)}")
         markets = exchange_mexc.load_markets()
         available_symbols = set(markets.keys())
         alert_list = []
         checked_count = 0
-        rsi_macd_ema_alert_list = []
 
         for symbol_mexc in symbols_mexc:
             if symbol_mexc not in available_symbols:
                 print(f"⚠️ {symbol_mexc} MEXC'de bulunamadı")
                 continue
             try:
-                ohlcv = exchange_mexc.fetch_ohlcv(symbol_mexc, '1h', limit=100)
+                ohlcv = exchange_mexc.fetch_ohlcv(symbol_mexc, '1h', limit=500)
                 df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-
-                # ------------------------ LIVE RSI ARROW LOGIC ------------------------
-                # Get latest ticker for realtime price
-                try:
-                    ticker = exchange_mexc.fetch_ticker(symbol_mexc)
-                    df.at[len(df)-1, 'close'] = ticker['last']
-                except Exception as e:
-                    print(f"⚠️ Ticker fetch error for {symbol_mexc}: {e}")
-
-                # Recalculate RSI for "live" candle
-                delta = df['close'].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                rs = gain / loss
-                df['rsi'] = 100 - (100 / (1 + rs))
-                # ----------------------------------------------------------------------
 
                 # Heikin-Ashi hesaplama
                 ha_df = pd.DataFrame()
@@ -184,14 +177,11 @@ def check_ma_signals_and_rsi_macd_ema():
                 # MA ve RSI hesaplama
                 df['ma7'] = df['close'].rolling(window=7).mean()
                 df['ma25'] = df['close'].rolling(window=25).mean()
-                # EMA'lar
-                df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
-                df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
-                # MACD ve sinyal çizgisi
-                exp12 = df['close'].ewm(span=12, adjust=False).mean()
-                exp26 = df['close'].ewm(span=26, adjust=False).mean()
-                df['macd'] = exp12 - exp26
-                df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+                delta = df['close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss
+                df['rsi'] = 100 - (100 / (1 + rs))
 
                 condition = df['ma7'] > df['ma25']
 
@@ -233,42 +223,7 @@ def check_ma_signals_and_rsi_macd_ema():
                 ma25_current = df['ma25'].iloc[-1]
                 rsi_value = df['rsi'].iloc[-1]
 
-                # Colored arrows (🔺 = up/red, 🔻 = down/red)
-                rsi_last = df['rsi'].iloc[-1]
-                rsi_prev = df['rsi'].iloc[-2]
-                if rsi_last > rsi_prev:
-                    rsi_arrow = "🔺"
-                else:
-                    rsi_arrow = "🔻"
-
-                # -- Calculate L and S for last 72 candles --
-                lookback = 72
-                up_long = 0
-                down_long = 0
-                volume = df['volume'][-lookback:]
-                avg_vol = volume.mean()
-                high_vol_thres = avg_vol * 1.5
-                for i in range(-lookback, 0):
-                    if i == 0:
-                        continue
-                    body = df['close'].iloc[i] - df['open'].iloc[i]
-                    rng = abs(df['high'].iloc[i] - df['low'].iloc[i])
-                    # Define a "long" candle: body at least 60% of range (can tune)
-                    is_long = abs(body) > 0.6 * rng and rng > 0
-                    is_high_vol = df['volume'].iloc[i] > high_vol_thres
-                    if is_long and is_high_vol:
-                        if body > 0:
-                            up_long += 1
-                        elif body < 0:
-                            down_long += 1
-
-                # ATH and high volume checks
-                day_high = df['high'][-24:].max()
-                curr_vol = df['volume'].iloc[-1]
-                is_ath = current_price >= day_high
-                is_high_vol = curr_vol > avg_vol * 1.5  # 1.5x average volume
-
-                print(f"📊 {symbol_mexc}: Fiyat={current_price:.4f}, MA7={ma7_current:.4f}, MA25={ma25_current:.4f}, RSI={rsi_value:.2f}, H={consecutive_count}{direction_emoji}, L:{up_long}, S:{down_long}")
+                print(f"📊 {symbol_mexc}: Fiyat={current_price:.4f}, MA7={ma7_current:.4f}, MA25={ma25_current:.4f}, RSI={rsi_value:.2f}, H={consecutive_count}{direction_emoji}")
 
                 # ALERT MESAJI için eski koddaki alert listesine ekle
                 if condition.iloc[-1]:
@@ -277,32 +232,12 @@ def check_ma_signals_and_rsi_macd_ema():
                     pct_diff_str = f"{sign}{pct_diff}%"
 
                     coin_name = symbol_mexc.replace('/USDT', '')
-                    alert_text = f"{coin_name}-{consecutive_hours}h-R{int(rsi_value)}-{consecutive_count}{direction_emoji} {pct_diff_str} {rsi_arrow} L{up_long}/S{down_long}"
+                    alert_text = f"{coin_name} ({consecutive_hours}h) R:{int(rsi_value)} H={consecutive_count}{direction_emoji} {pct_diff_str}"
 
-                    if is_ath and is_high_vol:
-                        alert_text = f"<b>{alert_text}</b>"
-
-                    alert_list.append((rsi_value, alert_text))
-
-                # --- EK KOŞUL: RSI>70 düşüşü, MACD cross down, EMA(9)<EMA(21) ---
-                rsi_was_over_70 = rsi_prev > 70 and rsi_last < rsi_prev
-                rsi_now_under_70 = rsi_last < 70
-
-                macd_last = df['macd'].iloc[-1]
-                macd_prev = df['macd'].iloc[-2]
-                macd_signal_last = df['macd_signal'].iloc[-1]
-                macd_signal_prev = df['macd_signal'].iloc[-2]
-                macd_cross_down = (macd_prev > macd_signal_prev) and (macd_last < macd_signal_last)
-
-                ema9_last = df['ema9'].iloc[-1]
-                ema21_last = df['ema21'].iloc[-1]
-                ema_condition = ema9_last < ema21_last
-
-                if rsi_was_over_70 and rsi_now_under_70 and macd_cross_down and ema_condition:
-                    coin_name = symbol_mexc.replace('/USDT', '')
-                    rsi_macd_ema_alert_list.append(f"{coin_name} RSI düşüşü, MACD kesişim, EMA(9)<EMA(21)")
+                    alert_list.append((None, alert_text))
 
                 checked_count += 1
+
                 time.sleep(1.5)
 
             except Exception as e:
@@ -310,28 +245,21 @@ def check_ma_signals_and_rsi_macd_ema():
 
         print(f"✅ {checked_count} coin kontrol edildi, {len(alert_list)} alert bulundu")
 
-        # MA alert sorting & messaging
-        alert_list.sort(key=lambda x: x[0], reverse=True)
         ma_condition_coins = [alert.split(' (')[0] for _, alert in alert_list]
 
         if check_ma_condition_changes(ma_condition_coins):
             if alert_list:
+                alert_list.sort(key=lambda x: x[0] or pd.Timestamp.now(tz=TZ))
+
                 msg = "🔺 MA(7)>MA(25) 1H:\n" + '\n'.join(alert for _, alert in alert_list)
                 send_telegram_alert(msg)
-                with open("alerts_log.csv", "a", encoding="utf-8") as f:
+                with open("alerts_log.csv", "a") as f:
                     for _, alert in alert_list:
                         f.write(f"{pd.Timestamp.now(tz=TZ)}, {alert}\n")
             else:
                 print("ℹ️ Hiçbir coin'de MA(7) > MA(25) koşulu sağlanmıyor")
         else:
             print("ℹ️ Alert listesi değişmedi, mesaj gönderilmedi")
-
-        # --- EK KOŞUL MESAJI ---
-        if rsi_macd_ema_alert_list:
-            msg = "⚠️ RSI>70'den düşüp, MACD aşağı cross, EMA(9)<EMA(21) olanlar:\n" + '\n'.join(rsi_macd_ema_alert_list)
-            send_telegram_alert(msg)
-        else:
-            print("Bu koşulları sağlayan coin yok.")
 
     except Exception as e:
         error_msg = f"Bot hatası: {e}"
@@ -349,7 +277,7 @@ def home():
 @app.route('/test')
 def manual_test():
     print("🧪 Manuel test başlatıldı")
-    check_ma_signals_and_rsi_macd_ema()
+    check_ma_signals()
     return "Manuel test tamamlandı! Konsol loglarını kontrol edin."
 
 @app.route('/status')
@@ -379,12 +307,16 @@ def start_bot():
         except:
             pass
 
-    check_ma_signals_and_rsi_macd_ema()
+    # Başlangıçta coin listesini güncelle
+    update_coin_list_from_mexc()
+    check_ma_signals()
 
     scheduler = BackgroundScheduler(daemon=True)
-    scheduler.add_job(check_ma_signals_and_rsi_macd_ema, 'interval', minutes=2, max_instances=1)
+    # MA kontrolü her 1 dakikada bir, coin listesi güncellemesi her saat
+    scheduler.add_job(check_ma_signals, 'interval', minutes=1, max_instances=1)
+    scheduler.add_job(update_coin_list_from_mexc, 'interval', hours=1, max_instances=1)
     scheduler.start()
-    print(f"✅ Bot başarıyla başlatıldı. Her 1 dakikada bir kontrol yapacak.")
+    print(f"✅ Bot başarıyla başlatıldı. Her 1 dakikada bir kontrol, saat başı coin listesi güncellemesi yapılacak.")
 
     atexit.register(lambda: scheduler.shutdown() if scheduler and scheduler.running else None)
 
